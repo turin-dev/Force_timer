@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>집중 타이머</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { min-height: 100vh; background: #0f0f13; color: #f1f1f5; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 24px 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 28px; background: #1a1a24; border-radius: 12px; padding: 4px; }
+  .tab { padding: 8px 24px; border-radius: 9px; border: none; cursor: pointer; font-weight: 600; font-size: 14px; background: transparent; color: #888; transition: all .2s; }
+  .tab.active { color: #fff; }
+  .modes { display: flex; gap: 8px; margin-bottom: 36px; }
+  .mode-btn { padding: 6px 16px; border-radius: 20px; border: 2px solid #333; background: transparent; color: #888; cursor: pointer; font-weight: 600; font-size: 13px; transition: all .2s; }
+  .circle-wrap { position: relative; width: 220px; height: 220px; margin-bottom: 36px; }
+  #timer-svg { transform: rotate(-90deg); }
+  .timer-text { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #time-display { font-size: 52px; font-weight: 700; letter-spacing: 2px; }
+  #mode-label { font-size: 13px; color: #888; margin-top: 4px; }
+  .controls { display: flex; gap: 12px; }
+  .btn-start { padding: 14px 40px; border-radius: 14px; border: none; color: #fff; font-weight: 700; font-size: 16px; cursor: pointer; transition: all .2s; }
+  .btn-reset { padding: 14px 20px; border-radius: 14px; border: 2px solid #333; background: transparent; color: #888; font-weight: 700; font-size: 16px; cursor: pointer; }
+  .panel { display: none; width: 100%; max-width: 400px; }
+  .panel.active { display: block; }
+  .summary { display: flex; gap: 12px; margin-bottom: 24px; }
+  .summary-card { flex: 1; background: #1a1a24; border-radius: 14px; padding: 18px 20px; }
+  .summary-card .s-label { font-size: 12px; color: #888; margin-bottom: 6px; }
+  .summary-card .s-val { font-size: 28px; font-weight: 700; }
+  .chart-box, .recent-box { background: #1a1a24; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+  .box-title { font-size: 13px; font-weight: 700; color: #aaa; margin-bottom: 20px; }
+  .bars { display: flex; align-items: flex-end; gap: 8px; height: 120px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; justify-content: flex-end; }
+  .bar-val { font-size: 10px; color: #666; }
+  .bar { width: 100%; border-radius: 6px; min-height: 4px; transition: height .4s; }
+  .bar-day { font-size: 11px; color: #666; margin-top: 4px; }
+  .session-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #252530; font-size: 13px; }
+  .no-sessions { color: #555; font-size: 13px; }
+  #timer-panel { display: flex; flex-direction: column; align-items: center; }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button class="tab active" id="tab-timer" onclick="switchTab('timer')">타이머</button>
+  <button class="tab" id="tab-stats" onclick="switchTab('stats')">통계</button>
+</div>
+
+<!-- Timer Panel -->
+<div id="timer-panel" class="panel active">
+  <div class="modes">
+    <button class="mode-btn" id="mode-focus" onclick="switchMode(0)">집중</button>
+    <button class="mode-btn" id="mode-short" onclick="switchMode(1)">짧은 휴식</button>
+    <button class="mode-btn" id="mode-long" onclick="switchMode(2)">긴 휴식</button>
+  </div>
+  <div class="circle-wrap">
+    <svg id="timer-svg" width="220" height="220">
+      <circle cx="110" cy="110" r="100" fill="none" stroke="#1e1e2e" stroke-width="12"/>
+      <circle id="progress-ring" cx="110" cy="110" r="100" fill="none" stroke-width="12"
+        stroke-dasharray="628.3" stroke-dashoffset="628.3" stroke-linecap="round"
+        style="transition: stroke-dashoffset 1s linear;"/>
+    </svg>
+    <div class="timer-text">
+      <span id="time-display">25:00</span>
+      <span id="mode-label">집중</span>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="btn-start" id="btn-start" onclick="handleStart()">시작</button>
+    <button class="btn-reset" onclick="handleReset()">리셋</button>
+  </div>
+</div>
+
+<!-- Stats Panel -->
+<div id="stats-panel" class="panel">
+  <div class="summary">
+    <div class="summary-card">
+      <div class="s-label">오늘 집중</div>
+      <div class="s-val" id="today-mins" style="">0분</div>
+    </div>
+    <div class="summary-card">
+      <div class="s-label">완료 세션</div>
+      <div class="s-val" id="today-count">0회</div>
+    </div>
+  </div>
+  <div class="chart-box">
+    <div class="box-title">주간 집중 기록</div>
+    <div class="bars" id="week-bars"></div>
+  </div>
+  <div class="recent-box">
+    <div class="box-title">최근 세션</div>
+    <div id="recent-list"><div class="no-sessions">아직 세션 기록이 없어요.</div></div>
+  </div>
+</div>
+
+<script>
+const MODES = [
+  { key: "focus", label: "집중", duration: 25*60, color: "#6366f1" },
+  { key: "short", label: "짧은 휴식", duration: 5*60, color: "#22c55e" },
+  { key: "long", label: "긴 휴식", duration: 15*60, color: "#0ea5e9" },
+];
+const CIRC = 2 * Math.PI * 100;
+const STORAGE_KEY = "focus_timer_sessions";
+
+let modeIdx = 0, timeLeft = MODES[0].duration, running = false, interval = null;
+
+function getSessions() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
+}
+function saveSessions(s) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {} 
+}
+function addSession(type, mins) {
+  const s = getSessions();
+  s.push({ type, mins, ts: Date.now() });
+  saveSessions(s);
+}
+
+function applyMode() {
+  const m = MODES[modeIdx];
+  document.getElementById("mode-label").textContent = m.label;
+  document.getElementById("progress-ring").style.stroke = m.color;
+  document.getElementById("btn-start").style.background = m.color;
+  document.getElementById("btn-start").style.boxShadow = `0 4px 20px ${m.color}55`;
+  document.getElementById("tab-timer").style.background = document.getElementById("tab-timer").classList.contains("active") ? m.color : "transparent";
+  document.getElementById("tab-timer").style.color = document.getElementById("tab-timer").classList.contains("active") ? "#fff" : "#888";
+  MODES.forEach((md, i) => {
+    const btn = document.getElementById(["mode-focus","mode-short","mode-long"][i]);
+    btn.style.borderColor = i === modeIdx ? md.color : "#333";
+    btn.style.color = i === modeIdx ? md.color : "#888";
+    btn.style.background = i === modeIdx ? md.color + "22" : "transparent";
+  });
+  updateDisplay();
+}
+
+function updateDisplay() {
+  const m = MODES[modeIdx];
+  const mm = String(Math.floor(timeLeft/60)).padStart(2,"0");
+  const ss = String(timeLeft%60).padStart(2,"0");
+  document.getElementById("time-display").textContent = `${mm}:${ss}`;
+  const prog = 1 - timeLeft / m.duration;
+  document.getElementById("progress-ring").style.strokeDashoffset = CIRC * (1 - prog);
+}
+
+function switchMode(i) {
+  modeIdx = i; timeLeft = MODES[i].duration;
+  running = false; clearInterval(interval);
+  document.getElementById("btn-start").textContent = "시작";
+  applyMode();
+}
+
+function handleStart() {
+  if (running) {
+    running = false; clearInterval(interval);
+    document.getElementById("btn-start").textContent = "재개";
+  } else {
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    running = true;
+    document.getElementById("btn-start").textContent = "일시정지";
+    interval = setInterval(() => {
+      timeLeft--;
+      updateDisplay();
+      if (timeLeft <= 0) {
+        clearInterval(interval); running = false;
+        document.getElementById("btn-start").textContent = "시작";
+        timeLeft = 0; updateDisplay();
+        addSession(MODES[modeIdx].key, Math.round(MODES[modeIdx].duration/60));
+        try { new Notification("세션 완료!", { body: MODES[modeIdx].label + " 세션이 끝났습니다." }); } catch {}
+        if (document.getElementById("stats-panel").classList.contains("active")) renderStats();
+      }
+    }, 1000);
+  }
+}
+
+function handleReset() {
+  running = false; clearInterval(interval);
+  timeLeft = MODES[modeIdx].duration;
+  document.getElementById("btn-start").textContent = "시작";
+  updateDisplay();
+}
+
+function switchTab(tab) {
+  const isTimer = tab === "timer";
+  document.getElementById("timer-panel").classList.toggle("active", isTimer);
+  document.getElementById("stats-panel").classList.toggle("active", !isTimer);
+  ["timer","stats"].forEach(t => {
+    const el = document.getElementById("tab-"+t);
+    el.classList.toggle("active", t === tab);
+    el.style.background = (t === tab) ? MODES[modeIdx].color : "transparent";
+    el.style.color = (t === tab) ? "#fff" : "#888";
+  });
+  if (!isTimer) renderStats();
+}
+
+function renderStats() {
+  const sessions = getSessions();
+  const today = new Date().toDateString();
+  const todayFocus = sessions.filter(s => s.type==="focus" && new Date(s.ts).toDateString()===today);
+  const totalMins = todayFocus.reduce((a,s)=>a+s.mins,0);
+  const color = MODES[modeIdx].color;
+  document.getElementById("today-mins").textContent = totalMins + "분";
+  document.getElementById("today-mins").style.color = color;
+  document.getElementById("today-count").textContent = todayFocus.length + "회";
+  document.getElementById("today-count").style.color = color;
+
+  // Week chart
+  const days = ["일","월","화","수","목","금","토"];
+  const now = new Date();
+  const weekData = Array.from({length:7},(_,i)=>{
+    const d = new Date(now); d.setDate(now.getDate()-(6-i));
+    const ds = d.toDateString();
+    const mins = sessions.filter(s=>s.type==="focus"&&new Date(s.ts).toDateString()===ds).reduce((a,s)=>a+s.mins,0);
+    return { day: days[d.getDay()], mins, isToday: ds===today };
+  });
+  const maxMins = Math.max(...weekData.map(d=>d.mins),1);
+  const barsEl = document.getElementById("week-bars");
+  barsEl.innerHTML = weekData.map(d=>`
+    <div class="bar-col">
+      <div class="bar-val">${d.mins>0?d.mins+"m":""}</div>
+      <div class="bar" style="height:${Math.max((d.mins/maxMins)*80,d.mins>0?6:4)}px;background:${d.mins>0?color:"#2a2a38"}"></div>
+      <div class="bar-day" style="color:${d.isToday?color:"#666"}">${d.day}</div>
+    </div>`).join("");
+
+  // Recent sessions
+  const recent = [...sessions].reverse().slice(0,5);
+  const recentEl = document.getElementById("recent-list");
+  if (!recent.length) { recentEl.innerHTML = '<div class="no-sessions">아직 세션 기록이 없어요.</div>'; return; }
+  recentEl.innerHTML = recent.map(s=>{
+    const m = MODES.find(md=>md.key===s.type)||MODES[0];
+    const time = new Date(s.ts).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+    return `<div class="session-row"><span style="color:${m.color}">${m.label}</span><span style="color:#666">${s.mins}분 · ${time}</span></div>`;
+  }).join("");
+}
+
+applyMode();
+</script>
+</body>
+</html>
